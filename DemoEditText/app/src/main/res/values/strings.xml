@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">DemoEditText</string>
+    <string name="btn_click_me">Click Me!</string>
+    <string name="hint_name">Type your name</string>
+    <string name="welcome_text">
+        Welcome Pham Tan Nguyen, who is a number one handsome man in the world!
+    </string>
+</resources>
