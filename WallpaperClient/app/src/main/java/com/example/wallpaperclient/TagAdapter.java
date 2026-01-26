@@ -1,6 +1,5 @@
 package com.example.wallpaperclient;
 
-
 import android.content.Context;
 import android.graphics.Color;
 import android.view.LayoutInflater;
@@ -15,7 +14,7 @@ public class TagAdapter extends RecyclerView.Adapter<TagAdapter.TagViewHolder> {
 
     private Context context;
     private List<String> tags;
-    private int selectedPosition = -1; // -1 là chưa chọn cái nào
+    private int selectedPosition = -1; // -1 indicates no selection
     private OnTagClickListener listener;
 
     public interface OnTagClickListener {
@@ -45,7 +44,7 @@ public class TagAdapter extends RecyclerView.Adapter<TagAdapter.TagViewHolder> {
         String tagName = tags.get(position);
         holder.tvTag.setText(tagName);
 
-        // Xử lý đổi màu khi chọn
+        // Highlight selected tag state
         if (selectedPosition == position) {
             holder.tvTag.setBackgroundResource(R.drawable.bg_tag_selected);
             holder.tvTag.setTextColor(Color.BLACK);
@@ -56,7 +55,7 @@ public class TagAdapter extends RecyclerView.Adapter<TagAdapter.TagViewHolder> {
 
         holder.itemView.setOnClickListener(v -> {
             selectedPosition = holder.getAdapterPosition();
-            notifyDataSetChanged(); // Load lại giao diện để cập nhật màu
+            notifyDataSetChanged(); // Refresh UI to reflect selection change
             listener.onTagClick(tagName);
         });
     }

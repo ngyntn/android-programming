@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp"
+    tools:context=".MainActivity">
+
+    <ScrollView
+        android:id="@+id/scrollContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:layout_marginEnd="10dp"
+        app:layout_constraintBottom_toTopOf="@+id/textView"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <Button
+                android:id="@+id/btnCenter"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Center"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnCenterCrop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="centerCrop"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnCenterInside"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="centerInside"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnFitCenter"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="fitCenter"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnFitEnd"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="fitEnd"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnFitStart"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="fitStart"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/btnFitXY"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="fitXY"
+                android:textAllCaps="false" />
+        </LinearLayout>
+    </ScrollView>
+
+    <ImageView
+        android:id="@+id/imageView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#E0E0E0"
+        app:layout_constraintBottom_toTopOf="@+id/textView"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/scrollContainer"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:srcCompat="@drawable/donaltrump" />
+
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center"
+        android:padding="16dp"
+        android:text="Chọn chế độ hiển thị"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

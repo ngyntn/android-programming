@@ -4,7 +4,6 @@ import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
-import android.os.Handler;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -19,12 +18,32 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatButton;
 import androidx.fragment.app.Fragment;
 
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
+import com.example.wallpaperclient.api.AIRequest;
+import com.example.wallpaperclient.api.ApiClient;
+import com.example.wallpaperclient.api.ApiService;
+import com.example.wallpaperclient.database.WallpaperEntity;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+
+import okhttp3.ResponseBody;
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 public class AiGeneratorFragment extends Fragment {
 
     private EditText edtPrompt;
     private AppCompatButton btnSubmit;
     private LinearLayout layoutResult;
     private ImageView imgResult;
+
+    // Holds the transient result before saving to DB
+    private WallpaperEntity currentGeneratedImage = null;
 
     @Nullable
     @Override
@@ -41,42 +60,123 @@ public class AiGeneratorFragment extends Fragment {
         layoutResult = view.findViewById(R.id.layoutResult);
         imgResult = view.findViewById(R.id.imgResult);
 
-        // Sự kiện nút Submit
         btnSubmit.setOnClickListener(v -> {
             String prompt = edtPrompt.getText().toString().trim();
             if (prompt.isEmpty()) {
                 Toast.makeText(getContext(), "Please enter your idea!", Toast.LENGTH_SHORT).show();
                 return;
             }
-
-            // Giả lập Loading (Sau này sẽ gọi API Python ở đây)
-            Toast.makeText(getContext(), "Generating art...", Toast.LENGTH_SHORT).show();
-            btnSubmit.setEnabled(false); // Khóa nút bấm
-            btnSubmit.setText("Generating...");
-
-            new Handler().postDelayed(() -> {
-                // Sau 2 giây thì hiện kết quả
-                layoutResult.setVisibility(View.VISIBLE);
-
-                // Ở đây giả lập set 1 ảnh khác làm kết quả (dùng lại img_demo hoặc ảnh khác)
-                imgResult.setImageResource(R.drawable.img_demo);
-
-                btnSubmit.setEnabled(true);
-                btnSubmit.setText("Submit");
-
-                // Cuộn xuống xem kết quả (Optional)
-            }, 2000);
+            performAiGeneration(prompt);
         });
 
-        // Sự kiện click vào ảnh kết quả để xem chi tiết
         imgResult.setOnClickListener(v -> {
-            // Dùng lại resource ID của ảnh demo, sau này là URL thật
-            showDetailDialog(R.drawable.img_demo);
+            if (currentGeneratedImage != null) {
+                showDetailDialog(currentGeneratedImage);
+            }
         });
     }
 
-    // Hàm hiển thị Dialog chi tiết (Copy y hệt từ HomeFragment)
-    private void showDetailDialog(int resourceId) {
+    private void performAiGeneration(String prompt) {
+        Toast.makeText(getContext(), "Generating art... This may take ~10s", Toast.LENGTH_LONG).show();
+        btnSubmit.setEnabled(false);
+        btnSubmit.setText("Generating...");
+        layoutResult.setVisibility(View.GONE);
+
+        ApiService apiService = ApiClient.getApiService();
+        Call<ResponseBody> call = apiService.generateAiImage(new AIRequest(prompt));
+
+        call.enqueue(new Callback<ResponseBody>() {
+            @Override
+            public void onResponse(Call<ResponseBody> call, Response<ResponseBody> response) {
+                if (response.isSuccessful() && response.body() != null) {
+
+                    // Persist raw stream to cache with a unique timestamp
+                    File savedFile = saveImageToCache(response.body());
+
+                    if (savedFile != null) {
+                        layoutResult.setVisibility(View.VISIBLE);
+
+                        // Force Glide to skip cache to ensure the new file is rendered
+                        Glide.with(getContext())
+                                .load(savedFile)
+                                .diskCacheStrategy(DiskCacheStrategy.NONE)
+                                .skipMemoryCache(true)
+                                .into(imgResult);
+
+                        currentGeneratedImage = new WallpaperEntity(
+                                savedFile.getAbsolutePath(),
+                                "AI",
+                                System.currentTimeMillis()
+                        );
+                        currentGeneratedImage.aiPrompt = prompt;
+                    } else {
+                        Toast.makeText(getContext(), "Error saving image", Toast.LENGTH_SHORT).show();
+                    }
+                } else {
+                    Toast.makeText(getContext(), "Generation failed. Try again!", Toast.LENGTH_SHORT).show();
+                }
+
+                btnSubmit.setEnabled(true);
+                btnSubmit.setText("Submit");
+            }
+
+            @Override
+            public void onFailure(Call<ResponseBody> call, Throwable t) {
+                Toast.makeText(getContext(), "Network Error: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                btnSubmit.setEnabled(true);
+                btnSubmit.setText("Submit");
+            }
+        });
+    }
+
+    /**
+     * Saves the ResponseBody stream to a temporary file in the app's cache directory.
+     * Handles cache eviction for old AI artifacts.
+     */
+    private File saveImageToCache(ResponseBody body) {
+        try {
+            File cacheDir = getContext().getCacheDir();
+
+            // Prune old generation artifacts to prevent cache bloat
+            File[] files = cacheDir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f.getName().startsWith("ai_gen_")) {
+                        f.delete();
+                    }
+                }
+            }
+
+            // Create unique filename to bypass Glide caching issues
+            String uniqueName = "ai_gen_" + System.currentTimeMillis() + ".png";
+            File file = new File(cacheDir, uniqueName);
+
+            InputStream inputStream = null;
+            OutputStream outputStream = null;
+
+            try {
+                byte[] buffer = new byte[4096];
+                inputStream = body.byteStream();
+                outputStream = new FileOutputStream(file);
+
+                int read;
+                while ((read = inputStream.read(buffer)) != -1) {
+                    outputStream.write(buffer, 0, read);
+                }
+                outputStream.flush();
+                return file;
+            } catch (Exception e) {
+                return null;
+            } finally {
+                if (inputStream != null) inputStream.close();
+                if (outputStream != null) outputStream.close();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void showDetailDialog(WallpaperEntity wallpaper) {
         final Dialog dialog = new Dialog(getContext());
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         dialog.setContentView(R.layout.dialog_wallpaper_detail);
@@ -87,10 +187,25 @@ public class AiGeneratorFragment extends Fragment {
         }
 
         ImageView imgDetail = dialog.findViewById(R.id.imgDetail);
-        imgDetail.setImageResource(resourceId);
+        AppCompatButton btnSave = dialog.findViewById(R.id.btnSave);
+        AppCompatButton btnSetWallpaper = dialog.findViewById(R.id.btnSetWallpaper);
 
-        // Xử lý nút Save / Set Wallpaper nếu cần
-        // ...
+        // Render preview without caching to reflect immediate changes
+        Glide.with(this)
+                .load(wallpaper.localPath)
+                .diskCacheStrategy(DiskCacheStrategy.NONE)
+                .skipMemoryCache(true)
+                .into(imgDetail);
+
+        btnSave.setOnClickListener(v -> {
+            // Persist from Cache -> Storage -> DB
+            WallpaperUtils.saveWallpaper(getContext(), wallpaper);
+            dialog.dismiss();
+        });
+
+        btnSetWallpaper.setOnClickListener(v -> {
+            WallpaperUtils.setWallpaper(getContext(), wallpaper);
+        });
 
         dialog.show();
     }

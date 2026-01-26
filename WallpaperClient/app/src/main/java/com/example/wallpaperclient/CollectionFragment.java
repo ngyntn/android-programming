@@ -3,6 +3,7 @@ package com.example.wallpaperclient;
 import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -13,6 +14,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatButton;
@@ -23,33 +26,35 @@ import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+import com.example.wallpaperclient.database.AppDatabase;
+import com.example.wallpaperclient.database.WallpaperEntity;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 public class CollectionFragment extends Fragment {
 
-    // Views Tab
+    // UI Components
     private RecyclerView rcvCollectionTabs;
-
-    // Layouts con
     private NestedScrollView layoutGallery;
     private LinearLayout layoutUpload;
     private ConstraintLayout layoutTrash;
-
-    // Views trong Gallery
-    private RecyclerView rcvLastWeek, rcvOlder;
-
-    // Views trong Upload
+    private RecyclerView rcvLastWeek, rcvOlder, rcvTrash;
     private AppCompatButton btnDoUpload;
-
-    // Views trong Trash
-    private RecyclerView rcvTrash;
     private TextView btnCleanTrash, tvEmptyTrash;
 
-    // Data Adapters
+    // Adapters
     private TagAdapter tabAdapter;
-    private WallpaperAdapter trashAdapter;
+    private WallpaperAdapter lastWeekAdapter, olderAdapter, trashAdapter;
+
+    private AppDatabase db;
+    private ActivityResultLauncher<String> pickImageLauncher;
 
     @Nullable
     @Override
@@ -61,45 +66,251 @@ public class CollectionFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // 1. Ánh xạ Views
+        db = AppDatabase.getInstance(getContext());
+
         initViews(view);
-
-        // 2. Setup Tabs (Gallery, Upload, Trash)
         setupTabs();
+        setupAdapters();
+        setupImagePicker();
 
-        // 3. Setup Nội dung từng màn hình
-        setupGalleryView();
-        setupUploadView();
-        setupTrashView();
+        loadGalleryData();
+        loadTrashData();
     }
 
     private void initViews(View view) {
         rcvCollectionTabs = view.findViewById(R.id.rcvCollectionTabs);
-
         layoutGallery = view.findViewById(R.id.layoutGallery);
         layoutUpload = view.findViewById(R.id.layoutUpload);
         layoutTrash = view.findViewById(R.id.layoutTrash);
-
         rcvLastWeek = view.findViewById(R.id.rcvLastWeek);
         rcvOlder = view.findViewById(R.id.rcvOlder);
-
         btnDoUpload = view.findViewById(R.id.btnDoUpload);
-
         rcvTrash = view.findViewById(R.id.rcvTrash);
         btnCleanTrash = view.findViewById(R.id.btnCleanTrash);
         tvEmptyTrash = view.findViewById(R.id.tvEmptyTrash);
     }
 
+    private void setupImagePicker() {
+        pickImageLauncher = registerForActivityResult(
+                new ActivityResultContracts.GetContent(),
+                uri -> {
+                    if (uri != null) {
+                        handleImageSelected(uri);
+                    }
+                }
+        );
+    }
+
+    private void setupAdapters() {
+        // Gallery Adapters
+        lastWeekAdapter = new WallpaperAdapter(getContext(), new ArrayList<>(), this::showGalleryDetailDialog);
+        rcvLastWeek.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        rcvLastWeek.setAdapter(lastWeekAdapter);
+
+        olderAdapter = new WallpaperAdapter(getContext(), new ArrayList<>(), this::showGalleryDetailDialog);
+        rcvOlder.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        rcvOlder.setAdapter(olderAdapter);
+
+        // Trash Adapter
+        trashAdapter = new WallpaperAdapter(getContext(), new ArrayList<>(), this::showTrashDetailDialog);
+        rcvTrash.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        rcvTrash.setAdapter(trashAdapter);
+
+        btnDoUpload.setOnClickListener(v -> pickImageLauncher.launch("image/*"));
+        btnCleanTrash.setOnClickListener(v -> handleCleanTrash());
+    }
+
+    private void handleImageSelected(Uri sourceUri) {
+        Toast.makeText(getContext(), "Processing image...", Toast.LENGTH_SHORT).show();
+
+        // Copy file to internal storage to maintain access rights across app restarts
+        File savedFile = copyUriToInternalStorage(sourceUri);
+
+        if (savedFile != null) {
+            WallpaperEntity newImg = new WallpaperEntity(
+                    savedFile.getAbsolutePath(),
+                    "UPLOAD",
+                    System.currentTimeMillis()
+            );
+            db.wallpaperDao().insertWallpaper(newImg);
+
+            Toast.makeText(getContext(), "Upload Successful!", Toast.LENGTH_SHORT).show();
+
+            loadGalleryData();
+            // Switch view context to Gallery
+            tabAdapter.setSelectedPosition(0);
+            layoutGallery.setVisibility(View.VISIBLE);
+            layoutUpload.setVisibility(View.GONE);
+            layoutTrash.setVisibility(View.GONE);
+        } else {
+            Toast.makeText(getContext(), "Failed to import image", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /**
+     * Copies content from a content URI to the app's private files directory.
+     */
+    private File copyUriToInternalStorage(Uri uri) {
+        try {
+            InputStream inputStream = getContext().getContentResolver().openInputStream(uri);
+            File dir = new File(getContext().getFilesDir(), "uploads");
+            if (!dir.exists()) dir.mkdirs();
+
+            File file = new File(dir, "upload_" + System.currentTimeMillis() + ".jpg");
+            OutputStream outputStream = new FileOutputStream(file);
+
+            byte[] buffer = new byte[4096];
+            int length;
+            while ((length = inputStream.read(buffer)) > 0) {
+                outputStream.write(buffer, 0, length);
+            }
+            outputStream.close();
+            inputStream.close();
+            return file;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private void handleCleanTrash() {
+        // Purge physical files before clearing DB records
+        List<WallpaperEntity> trashItems = db.wallpaperDao().getTrashWallpapers();
+        for (WallpaperEntity item : trashItems) {
+            deletePhysicalFile(item.localPath);
+        }
+
+        db.wallpaperDao().clearTrash();
+        loadTrashData();
+        Toast.makeText(getContext(), "Trash Cleaned", Toast.LENGTH_SHORT).show();
+    }
+
+    private void loadGalleryData() {
+        List<WallpaperEntity> allActive = db.wallpaperDao().getAllActiveWallpapers();
+        List<WallpaperEntity> lastWeekList = new ArrayList<>();
+        List<WallpaperEntity> olderList = new ArrayList<>();
+
+        long oneWeekInMillis = 7 * 24 * 60 * 60 * 1000L;
+        long now = System.currentTimeMillis();
+
+        for (WallpaperEntity item : allActive) {
+            if (now - item.createdAt < oneWeekInMillis) {
+                lastWeekList.add(item);
+            } else {
+                olderList.add(item);
+            }
+        }
+        lastWeekAdapter.setData(lastWeekList);
+        olderAdapter.setData(olderList);
+    }
+
+    private void loadTrashData() {
+        List<WallpaperEntity> trashList = db.wallpaperDao().getTrashWallpapers();
+        trashAdapter.setData(trashList);
+
+        if (trashList.isEmpty()) {
+            btnCleanTrash.setVisibility(View.GONE);
+            tvEmptyTrash.setVisibility(View.VISIBLE);
+        } else {
+            btnCleanTrash.setVisibility(View.VISIBLE);
+            tvEmptyTrash.setVisibility(View.GONE);
+        }
+    }
+
+    private void showGalleryDetailDialog(WallpaperEntity wallpaper) {
+        final Dialog dialog = new Dialog(getContext());
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(R.layout.dialog_wallpaper_detail);
+        setupDialogWindow(dialog);
+
+        ImageView imgDetail = dialog.findViewById(R.id.imgDetail);
+        AppCompatButton btnLeft = dialog.findViewById(R.id.btnSave);
+        AppCompatButton btnRight = dialog.findViewById(R.id.btnSetWallpaper);
+
+        Glide.with(this).load(wallpaper.localPath).into(imgDetail);
+
+        // Action: Move to Trash
+        btnLeft.setText("Unsave");
+        btnLeft.setOnClickListener(v -> {
+            db.wallpaperDao().updateStatus(wallpaper.id, "TRASH");
+            Toast.makeText(getContext(), "Moved to Trash", Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+            loadGalleryData();
+            loadTrashData();
+        });
+
+        // Action: Set Wallpaper
+        btnRight.setText("Set Wallpaper");
+        btnRight.setOnClickListener(v -> {
+            WallpaperUtils.setWallpaper(getContext(), wallpaper);
+        });
+
+        dialog.show();
+    }
+
+    private void showTrashDetailDialog(WallpaperEntity wallpaper) {
+        final Dialog dialog = new Dialog(getContext());
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setContentView(R.layout.dialog_wallpaper_detail);
+        setupDialogWindow(dialog);
+
+        ImageView imgDetail = dialog.findViewById(R.id.imgDetail);
+        AppCompatButton btnLeft = dialog.findViewById(R.id.btnSave);
+        AppCompatButton btnRight = dialog.findViewById(R.id.btnSetWallpaper);
+
+        Glide.with(this).load(wallpaper.localPath).into(imgDetail);
+
+        // Action: Restore
+        btnLeft.setText("Restore");
+        btnLeft.setOnClickListener(v -> {
+            db.wallpaperDao().updateStatus(wallpaper.id, "ACTIVE");
+            Toast.makeText(getContext(), "Restored!", Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+            loadGalleryData();
+            loadTrashData();
+        });
+
+        // Action: Permanent Delete
+        btnRight.setText("Delete Forever");
+        btnRight.setOnClickListener(v -> {
+            deletePhysicalFile(wallpaper.localPath);
+            db.wallpaperDao().deleteWallpaper(wallpaper);
+
+            Toast.makeText(getContext(), "Deleted Permanently", Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+            loadTrashData();
+        });
+
+        dialog.show();
+    }
+
+    private void setupDialogWindow(Dialog dialog) {
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+    }
+
+    private void deletePhysicalFile(String path) {
+        try {
+            File file = new File(path);
+            if (file.exists()) {
+                file.delete();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     private void setupTabs() {
         List<String> tabs = Arrays.asList("Gallery", "Upload", "Trash");
-
         tabAdapter = new TagAdapter(getContext(), tabs, tagName -> {
-            // Logic chuyển Tab
             switch (tagName) {
                 case "Gallery":
                     layoutGallery.setVisibility(View.VISIBLE);
                     layoutUpload.setVisibility(View.GONE);
                     layoutTrash.setVisibility(View.GONE);
+                    loadGalleryData();
                     break;
                 case "Upload":
                     layoutGallery.setVisibility(View.GONE);
@@ -110,94 +321,12 @@ public class CollectionFragment extends Fragment {
                     layoutGallery.setVisibility(View.GONE);
                     layoutUpload.setVisibility(View.GONE);
                     layoutTrash.setVisibility(View.VISIBLE);
+                    loadTrashData();
                     break;
             }
         });
-
         tabAdapter.setSelectedPosition(0);
-
         rcvCollectionTabs.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
         rcvCollectionTabs.setAdapter(tabAdapter);
-    }
-
-    private void setupGalleryView() {
-        // Setup Grid cho Last Week
-        rcvLastWeek.setLayoutManager(new GridLayoutManager(getContext(), 3));
-        rcvLastWeek.setAdapter(new WallpaperAdapter(getContext(), getDummyData(6), this::showUnsaveDialog));
-
-        // Setup Grid cho Older
-        rcvOlder.setLayoutManager(new GridLayoutManager(getContext(), 3));
-        rcvOlder.setAdapter(new WallpaperAdapter(getContext(), getDummyData(9), this::showUnsaveDialog));
-    }
-
-    private void setupUploadView() {
-        btnDoUpload.setOnClickListener(v -> {
-            // Giả lập upload
-            Toast.makeText(getContext(), "Uploading...", Toast.LENGTH_SHORT).show();
-            v.postDelayed(() -> {
-                Toast.makeText(getContext(), "Upload Successful! Added to Gallery.", Toast.LENGTH_LONG).show();
-            }, 1500);
-        });
-    }
-
-    private void setupTrashView() {
-        rcvTrash.setLayoutManager(new GridLayoutManager(getContext(), 3));
-
-        // Giả lập dữ liệu trong thùng rác (3 ảnh)
-        List<Integer> trashData = getDummyData(3);
-        trashAdapter = new WallpaperAdapter(getContext(), trashData, resourceId -> {
-            Toast.makeText(getContext(), "Item is in Trash", Toast.LENGTH_SHORT).show();
-        });
-        rcvTrash.setAdapter(trashAdapter);
-
-        // Sự kiện làm sạch thùng rác
-        btnCleanTrash.setOnClickListener(v -> {
-            trashData.clear();
-            trashAdapter.notifyDataSetChanged();
-
-            // Ẩn nút clean, hiện thông báo trống
-            btnCleanTrash.setVisibility(View.GONE);
-            tvEmptyTrash.setVisibility(View.VISIBLE);
-
-            Toast.makeText(getContext(), "Trash Cleaned", Toast.LENGTH_SHORT).show();
-        });
-    }
-
-    // Logic Dialog Unsave
-    private void showUnsaveDialog(int resourceId) {
-        final Dialog dialog = new Dialog(getContext());
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-        dialog.setContentView(R.layout.dialog_wallpaper_detail);
-
-        if (dialog.getWindow() != null) {
-            dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        }
-
-        ImageView imgDetail = dialog.findViewById(R.id.imgDetail);
-        imgDetail.setImageResource(resourceId);
-
-        AppCompatButton btnAction = dialog.findViewById(R.id.btnSave);
-        btnAction.setText("Unsave"); // Đổi thành nút xóa
-
-        btnAction.setOnClickListener(v -> {
-            Toast.makeText(getContext(), "Moved to Trash", Toast.LENGTH_SHORT).show();
-            dialog.dismiss();
-        });
-
-        AppCompatButton btnSetWallpaper = dialog.findViewById(R.id.btnSetWallpaper);
-        btnSetWallpaper.setOnClickListener(v -> {
-            Toast.makeText(getContext(), "Wallpaper Set!", Toast.LENGTH_SHORT).show();
-        });
-
-        dialog.show();
-    }
-
-    private List<Integer> getDummyData(int count) {
-        List<Integer> list = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            list.add(R.drawable.img_demo);
-        }
-        return list;
     }
 }

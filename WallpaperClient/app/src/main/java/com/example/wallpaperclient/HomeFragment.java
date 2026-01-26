@@ -1,6 +1,7 @@
 package com.example.wallpaperclient;
 
 import android.app.Dialog;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
@@ -15,30 +16,41 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.content.Context;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.AppCompatButton;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.bumptech.glide.Glide;
+import com.example.wallpaperclient.api.ApiClient;
+import com.example.wallpaperclient.api.ApiService;
+import com.example.wallpaperclient.api.WallpaperResponse;
+import com.example.wallpaperclient.database.WallpaperEntity;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+
 public class HomeFragment extends Fragment {
 
-    // Views
     private RecyclerView rcvPopular, rcvSearched, rcvTags;
-    private TextView tvSearchedTitle;
+    private TextView tvSearchedTitle, tvPopularTitle;
     private EditText edtSearch;
 
-    // Adapters
     private WallpaperAdapter popularAdapter;
     private WallpaperAdapter searchedAdapter;
     private TagAdapter tagAdapter;
+
+    private List<WallpaperEntity> popularList = new ArrayList<>();
+    private List<WallpaperEntity> searchedList = new ArrayList<>();
 
     @Nullable
     @Override
@@ -50,57 +62,95 @@ public class HomeFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // 1. Ánh xạ View
         rcvPopular = view.findViewById(R.id.rcvWallpapers);
         rcvSearched = view.findViewById(R.id.rcvSearched);
         rcvTags = view.findViewById(R.id.rcvTags);
         tvSearchedTitle = view.findViewById(R.id.tvSearchedTitle);
+        // Map layout ID to class field
+        tvPopularTitle = view.findViewById(R.id.tvTitle);
         edtSearch = view.findViewById(R.id.edtSearch);
 
-        // 2. Setup Popular RecyclerView (Grid 3 cột)
         setupPopularList();
-
-        // 3. Setup Tags RecyclerView (Horizontal)
+        setupSearchedList();
         setupTagList();
-
-        // 4. Setup Search Action
         setupSearchAction();
+
+        // Load default content
+        fetchPopularWallpapers("Popular");
     }
 
     private void setupPopularList() {
-        GridLayoutManager gridLayoutManager = new GridLayoutManager(getContext(), 3);
-        rcvPopular.setLayoutManager(gridLayoutManager);
-
-        // Truyền thêm listener vào Adapter để xử lý click mở Dialog
-        popularAdapter = new WallpaperAdapter(getContext(), getDummyData(15), resourceId -> {
-            showDetailDialog(resourceId);
-        });
+        rcvPopular.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        popularAdapter = new WallpaperAdapter(getContext(), popularList, this::showDetailDialog);
         rcvPopular.setAdapter(popularAdapter);
     }
 
+    private void setupSearchedList() {
+        rcvSearched.setLayoutManager(new GridLayoutManager(getContext(), 3));
+        searchedAdapter = new WallpaperAdapter(getContext(), searchedList, this::showDetailDialog);
+        rcvSearched.setAdapter(searchedAdapter);
+    }
+
     private void setupTagList() {
-        // Danh sách tag mẫu
-        List<String> tags = Arrays.asList("Nature", "Abstract", "Cars", "Space", "Minimal");
+        List<String> tags = Arrays.asList("Popular", "Nature", "Abstract", "Cars", "Space", "Minimal", "Cyberpunk", "Neon", "Anime");
 
         tagAdapter = new TagAdapter(getContext(), tags, tagName -> {
-            // Logic khi click vào tag: Chỉ lọc Popular list
-            Toast.makeText(getContext(), "Filtering Popular by: " + tagName, Toast.LENGTH_SHORT).show();
-            // TODO: Sau này gọi API filter ở đây
+            if (tagName.equals("Popular")) {
+                tvPopularTitle.setText("Popular");
+                fetchPopularWallpapers("Popular");
+            } else {
+                tvPopularTitle.setText(tagName + " Wallpapers");
+                fetchPopularWallpapers(tagName);
+            }
         });
+
+        // Highlight the first tag by default
+        tagAdapter.setSelectedPosition(0);
 
         rcvTags.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
         rcvTags.setAdapter(tagAdapter);
     }
 
     private void setupSearchAction() {
-        edtSearch.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+        edtSearch.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                performSearch(edtSearch.getText().toString());
+                return true;
+            }
+            return false;
+        });
+    }
+
+    private void fetchPopularWallpapers(String tag) {
+        ApiService apiService = ApiClient.getApiService();
+        Call<List<WallpaperResponse>> call = apiService.getRandomWallpapers(tag);
+
+        call.enqueue(new Callback<List<WallpaperResponse>>() {
             @Override
-            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
-                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
-                    performSearch(edtSearch.getText().toString());
-                    return true;
+            public void onResponse(Call<List<WallpaperResponse>> call, Response<List<WallpaperResponse>> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    List<WallpaperResponse> apiData = response.body();
+
+                    popularList.clear();
+
+                    // Map API DTOs to local Entity model
+                    for (WallpaperResponse item : apiData) {
+                        WallpaperEntity entity = new WallpaperEntity(
+                                item.getFullUrl(),
+                                "UNSPLASH",
+                                System.currentTimeMillis()
+                        );
+                        entity.remoteId = item.getId();
+                        popularList.add(entity);
+                    }
+
+                    popularAdapter.setData(popularList);
                 }
-                return false;
+            }
+
+            @Override
+            public void onFailure(Call<List<WallpaperResponse>> call, Throwable t) {
+                Toast.makeText(getContext(), "Network Error: " + t.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
     }
@@ -108,51 +158,77 @@ public class HomeFragment extends Fragment {
     private void performSearch(String query) {
         if (query.isEmpty()) return;
 
-        // Ẩn bàn phím
         InputMethodManager imm = (InputMethodManager) getActivity().getSystemService(Context.INPUT_METHOD_SERVICE);
-        imm.hideSoftInputFromWindow(edtSearch.getWindowToken(), 0);
+        if (imm != null) imm.hideSoftInputFromWindow(edtSearch.getWindowToken(), 0);
 
-        // Hiển thị vùng Search
         tvSearchedTitle.setVisibility(View.VISIBLE);
         rcvSearched.setVisibility(View.VISIBLE);
 
-        // Setup Searched List
-        GridLayoutManager searchLayoutManager = new GridLayoutManager(getContext(), 3);
-        rcvSearched.setLayoutManager(searchLayoutManager);
+        ApiService apiService = ApiClient.getApiService();
+        Call<List<WallpaperResponse>> call = apiService.searchWallpapers(query, 1);
 
-        // Giả lập kết quả tìm kiếm (Dùng list ảnh khác hoặc giống cũng được)
-        searchedAdapter = new WallpaperAdapter(getContext(), getDummyData(6), resourceId -> {
-            showDetailDialog(resourceId);
+        call.enqueue(new Callback<List<WallpaperResponse>>() {
+            @Override
+            public void onResponse(Call<List<WallpaperResponse>> call, Response<List<WallpaperResponse>> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    List<WallpaperResponse> apiData = response.body();
+
+                    searchedList.clear();
+                    for (WallpaperResponse item : apiData) {
+                        WallpaperEntity entity = new WallpaperEntity(
+                                item.getFullUrl(),
+                                "UNSPLASH",
+                                System.currentTimeMillis()
+                        );
+                        entity.remoteId = item.getId();
+                        searchedList.add(entity);
+                    }
+                    searchedAdapter.setData(searchedList);
+
+                    if (searchedList.isEmpty()) {
+                        Toast.makeText(getContext(), "No results found for '" + query + "'", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }
+
+            @Override
+            public void onFailure(Call<List<WallpaperResponse>> call, Throwable t) {
+                Toast.makeText(getContext(), "Search failed: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+            }
         });
-        rcvSearched.setAdapter(searchedAdapter);
     }
 
-    private void showDetailDialog(int resourceId) {
+    private void showDetailDialog(WallpaperEntity wallpaper) {
         final Dialog dialog = new Dialog(getContext());
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
         dialog.setContentView(R.layout.dialog_wallpaper_detail);
 
-        // Cấu hình Window để Dialog full màn hình ngang, nền trong suốt
         if (dialog.getWindow() != null) {
             dialog.getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-            // Quan trọng: Set width là MATCH_PARENT để layout XML tự xử lý padding
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         }
 
         ImageView imgDetail = dialog.findViewById(R.id.imgDetail);
-        imgDetail.setImageResource(resourceId);
+        AppCompatButton btnSave = dialog.findViewById(R.id.btnSave);
+        AppCompatButton btnSetWallpaper = dialog.findViewById(R.id.btnSetWallpaper);
 
-        // Xử lý sự kiện click nút trong dialog (Optional)
-        // dialog.findViewById(R.id.btnSave).setOnClickListener(...);
+        // Heuristic: Check if localPath is a resource ID (demo) or a URL
+        try {
+            int resId = Integer.parseInt(wallpaper.localPath);
+            imgDetail.setImageResource(resId);
+        } catch (NumberFormatException e) {
+            Glide.with(this).load(wallpaper.localPath).into(imgDetail);
+        }
+
+        btnSave.setOnClickListener(v -> {
+            WallpaperUtils.saveWallpaper(getContext(), wallpaper);
+            dialog.dismiss();
+        });
+
+        btnSetWallpaper.setOnClickListener(v -> {
+            WallpaperUtils.setWallpaper(getContext(), wallpaper);
+        });
 
         dialog.show();
-    }
-
-    private List<Integer> getDummyData(int count) {
-        List<Integer> list = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            list.add(R.drawable.img_demo);
-        }
-        return list;
     }
 }

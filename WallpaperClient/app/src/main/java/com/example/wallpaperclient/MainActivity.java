@@ -17,6 +17,7 @@ public class MainActivity extends AppCompatActivity {
 
         BottomNavigationView bottomNav = findViewById(R.id.bottom_navigation);
 
+        // Initialize default fragment
         if (savedInstanceState == null) {
             getSupportFragmentManager().beginTransaction()
                     .replace(R.id.fragment_container, new HomeFragment())
@@ -34,7 +35,7 @@ public class MainActivity extends AppCompatActivity {
                 } else if (id == R.id.nav_ai) {
                     selectedFragment = new AiGeneratorFragment();
                 } else if (id == R.id.nav_collection) {
-                    selectedFragment = new CollectionFragment(); // Đã kích hoạt!
+                    selectedFragment = new CollectionFragment();
                 }
 
                 if (selectedFragment != null) {
